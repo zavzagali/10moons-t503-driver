@@ -47,17 +47,23 @@ pen_events = {
 }
 
 btn_events = {ecodes.EV_KEY: btn_codes}
-
 # Find the device
 dev = usb.core.find(idVendor=config["vendor_id"], idProduct=config["product_id"])
 if dev == None:
     print('No Device Connected')
     exit(1)
-# Select end point for reading second interface [2] for actual data
-# I don't know what [0] and [1] are used for
-ep = dev[0].interfaces()[2].endpoints()[0]
-# Reset the device (don't know why, but till it works don't touch it)
-dev.reset()
+
+    try:
+        # Select interface 2 and get the first endpoint under it (0x85)
+        interface_index = 2
+        ep = dev[0].interfaces()[interface_index].endpoints()[0]
+        print(f"Success: Pen data path configured. Interface No: 2, Endpoint Address: {hex(ep.bEndpointAddress)}")
+    except Exception as e:
+        print(f"Error while selecting interface: {e}")
+        sys.exit(1)
+
+    # dev.reset() was removed - it was causing disconnections.
+
 
 # Drop default kernel driver from all devices
 for j in [0, 1, 2]:
@@ -86,32 +92,46 @@ y_offset = config["screen_mapping"]["y_offset_percent"] * config["pen"]["max_y"]
 # Infinite loop
 while True:
     try:
-        data = dev.read(ep.bEndpointAddress, ep.wMaxPacketSize)
-        if data[1] in [192, 193]: # Pen actions
+        # Print at the start of each loop for debugging
+        print("Waiting for data from the tablet... (Touch/move the pen on the tablet)")
+        
+        data = dev.read(ep.bEndpointAddress, ep.wMaxPacketSize, timeout=5000)
+        
+        # Print raw data to terminal when received
+        print(f"Data received! Raw Data (Bytes): {list(data)}")
+        
+        # Use direct equality check instead of list to avoid getting stuck
+        is_pen_action = False
+        if data == 192:
+            is_pen_action = True
+        if data == 193:
+            is_pen_action = True
+
+        if is_pen_action: # Pen actions
             pen_x = int((abs(max_x - (data[x1] * 255 + data[x2])) * width_precent) + x_offset)
             pen_y = int((abs(max_y - (data[y1] * 255 + data[y2])) * height_precent) + y_offset)
-            pen_pressure = data[7] * 255 + data[6]
+            pen_pressure = data * 255 + data
             vpen.write(ecodes.EV_ABS, ecodes.ABS_X, pen_x)
             vpen.write(ecodes.EV_ABS, ecodes.ABS_Y, pen_y)
             vpen.write(ecodes.EV_ABS, ecodes.ABS_PRESSURE, pen_pressure)
-            if data[1] == 192: # Pen touch
+            if data == 192: # Pen touch
                 vpen.write(ecodes.EV_KEY, ecodes.BTN_TOUCH, 0)
             else:
                 vpen.write(ecodes.EV_KEY, ecodes.BTN_TOUCH, 1)
-        elif data[0] == 2: # Tablet button actions
+        elif data == 2: # Tablet button actions
             # press types: 0 - up; 1 - down; 2 - hold
             press_type = 1
-            if data[1] == 2: # First button
+            if data == 2: # First button
                 pressed = 0
-            elif data[1] == 4: # Second button
+            elif data == 4: # Second button
                 pressed = 1
-            elif data[3] == 44: # Third button
+            elif data == 44: # Third button
                 pressed = 2
-            elif data[3] == 43: # Fourth button
+            elif data == 43: # Fourth button
                 pressed = 3
-            elif data[1] == 1 and data [3] == 28: # First button on the Pen
+            elif data == 1 and data == 28: # First button on the Pen
                 pressed = 4
-            elif data[1] == 1 and data [3] == 29: # Second button on the Pen
+            elif data == 1 and data == 29: # Second button on the Pen
                 pressed = 5
             else:
                 press_type = 0
@@ -123,7 +143,8 @@ while True:
         vpen.syn()
         vbtn.syn()
     except usb.core.USBError as e:
-        if e.args[0] == 19:
+        print(f"USB Error Caught: {str(e)} (Error Code: {e.args})")
+        if len(e.args) > 0 and e.args == 19:
             vpen.close()
             vbtn.close()
             raise Exception("Device has been disconnected")
@@ -132,4 +153,4 @@ while True:
         vbtn.close()
         sys.exit("\nDriver terminated successfully.")
     except Exception as e:
-        print(e)
+        print(f"A general error occurred: {e}")
