@@ -53,16 +53,16 @@ if dev == None:
     print('No Device Connected')
     exit(1)
 
-    try:
-        # Select interface 2 and get the first endpoint under it (0x85)
-        interface_index = 2
-        ep = dev[0].interfaces()[interface_index].endpoints()[0]
-        print(f"Success: Pen data path configured. Interface No: 2, Endpoint Address: {hex(ep.bEndpointAddress)}")
-    except Exception as e:
-        print(f"Error while selecting interface: {e}")
-        sys.exit(1)
+try:
+    # Select interface 2 and get the first endpoint under it (0x85)
+    interface_index = 2
+    ep = dev[0].interfaces()[interface_index].endpoints()[0]
+    print(f"Success: Pen data path configured. Interface No: 2, Endpoint Address: {hex(ep.bEndpointAddress)}")
+except Exception as e:
+    print(f"Error while selecting interface: {e}")
+    sys.exit(1)
 
-    # dev.reset() was removed - it was causing disconnections.
+# dev.reset() was removed - it was causing disconnections.
 
 
 # Drop default kernel driver from all devices
@@ -89,49 +89,49 @@ height_precent = config["screen_mapping"]["height_percent"] / 100
 x_offset = config["screen_mapping"]["x_offset_percent"] * config["pen"]["max_x"] / 100
 y_offset = config["screen_mapping"]["y_offset_percent"] * config["pen"]["max_y"] / 100
 
+last_data = None
+
 # Infinite loop
 while True:
     try:
-        # Print at the start of each loop for debugging
-        print("Waiting for data from the tablet... (Touch/move the pen on the tablet)")
-        
         data = dev.read(ep.bEndpointAddress, ep.wMaxPacketSize, timeout=5000)
-        
-        # Print raw data to terminal when received
-        print(f"Data received! Raw Data (Bytes): {list(data)}")
-        
+
+        if data != last_data:
+            print(f"Data changed! Raw Data (Bytes): {list(data)}")
+            last_data = data
+
         # Use direct equality check instead of list to avoid getting stuck
         is_pen_action = False
-        if data == 192:
+        if data[1] == 192:
             is_pen_action = True
-        if data == 193:
+        if data[1] == 193:
             is_pen_action = True
 
         if is_pen_action: # Pen actions
             pen_x = int((abs(max_x - (data[x1] * 255 + data[x2])) * width_precent) + x_offset)
             pen_y = int((abs(max_y - (data[y1] * 255 + data[y2])) * height_precent) + y_offset)
-            pen_pressure = data * 255 + data
+            pen_pressure = data[7] * 255 + data[6]
             vpen.write(ecodes.EV_ABS, ecodes.ABS_X, pen_x)
             vpen.write(ecodes.EV_ABS, ecodes.ABS_Y, pen_y)
             vpen.write(ecodes.EV_ABS, ecodes.ABS_PRESSURE, pen_pressure)
-            if data == 192: # Pen touch
+            if data[1] == 192: # Pen touch
                 vpen.write(ecodes.EV_KEY, ecodes.BTN_TOUCH, 0)
             else:
                 vpen.write(ecodes.EV_KEY, ecodes.BTN_TOUCH, 1)
-        elif data == 2: # Tablet button actions
+        elif data[0] == 2: # Tablet button actions
             # press types: 0 - up; 1 - down; 2 - hold
             press_type = 1
-            if data == 2: # First button
+            if data[1] == 2: # First button
                 pressed = 0
-            elif data == 4: # Second button
+            elif data[1] == 4: # Second button
                 pressed = 1
-            elif data == 44: # Third button
+            elif data[3] == 44: # Third button
                 pressed = 2
-            elif data == 43: # Fourth button
+            elif data[3] == 43: # Fourth button
                 pressed = 3
-            elif data == 1 and data == 28: # First button on the Pen
+            elif data[1] == 1 and data[3] == 28: # First button on the Pen
                 pressed = 4
-            elif data == 1 and data == 29: # Second button on the Pen
+            elif data[1] == 1 and data[3] == 29: # Second button on the Pen
                 pressed = 5
             else:
                 press_type = 0
@@ -144,7 +144,7 @@ while True:
         vbtn.syn()
     except usb.core.USBError as e:
         print(f"USB Error Caught: {str(e)} (Error Code: {e.args})")
-        if len(e.args) > 0 and e.args == 19:
+        if len(e.args) > 0 and e.args[0] == 19:
             vpen.close()
             vbtn.close()
             raise Exception("Device has been disconnected")
