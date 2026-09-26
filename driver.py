@@ -91,6 +91,12 @@ y_offset = config["screen_mapping"]["y_offset_percent"] * config["pen"]["max_y"]
 
 last_data = None
 
+# Jitter filter settings (0 disables the filter)
+smoothing = float(config.get("filter", {}).get("smoothing", 0.35))
+deadzone = int(config.get("filter", {}).get("deadzone", 2))
+smooth_x, smooth_y = None, None
+report_x, report_y = None, None
+
 # Infinite loop
 while True:
     try:
@@ -111,12 +117,23 @@ while True:
             pen_x = int((abs(max_x - (data[x1] * 255 + data[x2])) * width_precent) + x_offset)
             pen_y = int((abs(max_y - (data[y1] * 255 + data[y2])) * height_precent) + y_offset)
             pen_pressure = data[7] * 255 + data[6]
-            vpen.write(ecodes.EV_ABS, ecodes.ABS_X, pen_x)
-            vpen.write(ecodes.EV_ABS, ecodes.ABS_Y, pen_y)
-            vpen.write(ecodes.EV_ABS, ecodes.ABS_PRESSURE, pen_pressure)
-            if data[1] == 192: # Pen touch
-                vpen.write(ecodes.EV_KEY, ecodes.BTN_TOUCH, 0)
+            # Exponential moving average to reduce jitter
+            if smoothing <= 0 or smooth_x is None:
+                smooth_x, smooth_y = float(pen_x), float(pen_y)
             else:
+                smooth_x += smoothing * (pen_x - smooth_x)
+                smooth_y += smoothing * (pen_y - smooth_y)
+            # Deadzone: ignore tiny movements around last reported position
+            if report_x is None or abs(smooth_x - report_x) >= deadzone or abs(smooth_y - report_y) >= deadzone:
+                report_x, report_y = int(round(smooth_x)), int(round(smooth_y))
+            # Pen in proximity, required for the cursor to move
+            vpen.write(ecodes.EV_KEY, ecodes.BTN_TOOL_PEN, 1)
+            vpen.write(ecodes.EV_ABS, ecodes.ABS_X, report_x)
+            vpen.write(ecodes.EV_ABS, ecodes.ABS_Y, report_y)
+            vpen.write(ecodes.EV_ABS, ecodes.ABS_PRESSURE, pen_pressure)
+            if data[1] == 192: # Pen hovering
+                vpen.write(ecodes.EV_KEY, ecodes.BTN_TOUCH, 0)
+            else: # Pen touching
                 vpen.write(ecodes.EV_KEY, ecodes.BTN_TOUCH, 1)
         elif data[0] == 2: # Tablet button actions
             # press types: 0 - up; 1 - down; 2 - hold
@@ -143,6 +160,11 @@ while True:
         vpen.syn()
         vbtn.syn()
     except usb.core.USBError as e:
+        if len(e.args) > 0 and e.args[0] == 110:
+            # Read timeout, pen is idle: reset filter so next stroke starts fresh
+            smooth_x, smooth_y = None, None
+            report_x, report_y = None, None
+            continue
         print(f"USB Error Caught: {str(e)} (Error Code: {e.args})")
         if len(e.args) > 0 and e.args[0] == 19:
             vpen.close()

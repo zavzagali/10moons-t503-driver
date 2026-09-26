@@ -13,15 +13,18 @@ actions:
     pen_touch: BTN_TOUCH
     tablet_buttons:
         - KEY_LEFTCTRL+KEY_Z
-        - KEY_LEFTCTRL+KEY_A
-        - KEY_C
-        - KEY_D
-        - BTN_RIGHT
-        - BTN_MIDDLE
+        - KEY_LEFTCTRL+KEY_Y
+        - KEY_RIGHTCTRL+KEY_1
+        - KEY_RIGHTCTRL+KEY_5
+        - KEY_UP
+        - KEY_DOWN
 settings:
     swap_axis: false
     swap_direction_x: true
     swap_direction_y: false
+filter:
+    smoothing: 0.25
+    deadzone: 6
 screen_mapping:
     width_percent: 100
     height_percent: 100
